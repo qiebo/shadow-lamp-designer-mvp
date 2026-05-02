@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>影灯设计师 MVP</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      if (location.protocol === "file:" && !location.pathname.replaceAll("\\", "/").includes("/dist/")) {
+        location.replace("./dist/index.html");
+      }
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

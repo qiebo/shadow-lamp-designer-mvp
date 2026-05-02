@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebGL2 诊断</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: "Microsoft YaHei", system-ui, sans-serif;
+        background: #0f1320;
+        color: #e8eef9;
+      }
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      .ok { color: #6ee7a2; }
+      .bad { color: #ff8d8d; }
+      pre {
+        margin: 10px 0 0;
+        padding: 12px;
+        border-radius: 8px;
+        background: #090d18;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      button {
+        margin-top: 12px;
+        min-height: 36px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 7px;
+        background: #8fd0ff;
+        color: #07111e;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WebGL2 本地诊断</h1>
+      <div id="summary"></div>
+      <pre id="details"></pre>
+      <button id="copyBtn" type="button">复制诊断结果</button>
+    </main>
+    <script>
+      const summary = document.getElementById("summary");
+      const details = document.getElementById("details");
+      const copyBtn = document.getElementById("copyBtn");
+
+      function runDiag() {
+        const info = {
+          userAgent: navigator.userAgent,
+          language: navigator.language,
+          hardwareConcurrency: navigator.hardwareConcurrency,
+          webgl2: null,
+          webgl: null,
+          webgl2Renderer: null,
+          webgl2Vendor: null,
+          webglRenderer: null,
+          webglVendor: null
+        };
+
+        const canvas = document.createElement("canvas");
+        const gl2 = canvas.getContext("webgl2");
+        info.webgl2 = !!gl2;
+        if (gl2) {
+          const ext = gl2.getExtension("WEBGL_debug_renderer_info");
+          if (ext) {
+            info.webgl2Vendor = gl2.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+            info.webgl2Renderer = gl2.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+          }
+        }
+
+        const gl1 = canvas.getContext("webgl");
+        info.webgl = !!gl1;
+        if (gl1) {
+          const ext = gl1.getExtension("WEBGL_debug_renderer_info");
+          if (ext) {
+            info.webglVendor = gl1.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+            info.webglRenderer = gl1.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+          }
+        }
+
+        const ok = info.webgl2 === true;
+        summary.innerHTML = ok
+          ? '<p class="ok"><b>结论：</b>WebGL2 可用，3D 预览应可正常显示。</p>'
+          : '<p class="bad"><b>结论：</b>WebGL2 不可用，这就是 3D 预览缺失的直接原因。</p>';
+        details.textContent = JSON.stringify(info, null, 2);
+      }
+
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(details.textContent || "");
+          copyBtn.textContent = "已复制";
+          setTimeout(() => {
+            copyBtn.textContent = "复制诊断结果";
+          }, 1000);
+        } catch {
+          copyBtn.textContent = "复制失败";
+          setTimeout(() => {
+            copyBtn.textContent = "复制诊断结果";
+          }, 1000);
+        }
+      });
+
+      runDiag();
+    </script>
+  </body>
+</html>

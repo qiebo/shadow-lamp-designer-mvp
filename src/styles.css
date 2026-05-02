@@ -1,0 +1,396 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #1a1a2e;
+  color: #f4f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 100vw;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 260px),
+    #1a1a2e;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  padding: 18px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(11, 15, 28, 0.78);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.brand p {
+  margin: 0;
+  color: #9fb0c7;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.panel h2 {
+  margin: 0;
+  color: #dfe8f7;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.drop-zone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 112px;
+  padding: 16px;
+  border: 1px dashed rgba(120, 185, 255, 0.55);
+  border-radius: 8px;
+  color: #c9d8ea;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(91, 148, 255, 0.08);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+  overflow: hidden;
+}
+
+.drop-zone:hover,
+.drop-zone.is-dragging {
+  border-color: #8fd0ff;
+  background: rgba(91, 148, 255, 0.16);
+}
+
+.drop-zone strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.drop-zone span {
+  position: relative;
+  z-index: 1;
+  color: #95a8c0;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-canvas {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: #080b12;
+}
+
+.mask-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.mask-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mask-tile span {
+  color: #9fb0c7;
+  font-size: 12px;
+}
+
+.mask-tile canvas {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: #080b12;
+}
+
+.control {
+  display: grid;
+  gap: 7px;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.control label,
+.checkbox-label {
+  color: #d7e1ef;
+  font-size: 13px;
+}
+
+.value {
+  min-width: 72px;
+  color: #8fd0ff;
+  font-size: 12px;
+  text-align: right;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #66c2ff;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-check {
+  padding-top: 2px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.stat {
+  padding: 9px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.stat strong {
+  display: block;
+  color: #ffffff;
+  font-size: 16px;
+}
+
+.stat span {
+  color: #95a8c0;
+  font-size: 11px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  color: #07111e;
+  font-weight: 700;
+  cursor: pointer;
+  background: #8fd0ff;
+}
+
+.button.secondary {
+  color: #e7eef8;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.viewer {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+  background: #0e1322;
+}
+
+.viewer canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-fallback-canvas {
+  z-index: 1;
+}
+
+.viewer-message {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  z-index: 4;
+  width: auto;
+  max-width: min(520px, calc(100% - 36px));
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: #eef4ff;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  background: rgba(8, 12, 21, 0.82);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+}
+
+.viewer-controls {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  width: min(680px, calc(100% - 36px));
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(8, 12, 21, 0.76);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+}
+
+.viewer-controls-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.viewer-controls-head strong {
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.viewer-controls-head span {
+  color: #95a8c0;
+  font-size: 11px;
+}
+
+.viewer-controls .compact-check {
+  align-self: end;
+}
+
+.rim-options {
+  display: flex;
+  align-items: end;
+  gap: 18px;
+  min-height: 45px;
+  padding-top: 18px;
+  white-space: nowrap;
+}
+
+.hud {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 2;
+  max-width: min(520px, calc(100% - 36px));
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(8, 12, 21, 0.72);
+  color: #d9e5f4;
+  font-size: 13px;
+  line-height: 1.45;
+  backdrop-filter: blur(12px);
+}
+
+.hud b {
+  color: #ffffff;
+}
+
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    height: auto;
+    max-height: none;
+  }
+
+  .viewer {
+    min-height: 68vh;
+  }
+
+  .viewer-controls {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    grid-template-columns: 1fr;
+  }
+}
