@@ -64,7 +64,7 @@ const params: LampParams = {
   lightBrightness: 3,
   sensitivity: 18,
   wallResolution: 180,
-  minFeature: 1.2,
+  minFeature: 0.8,
   invert: true,
   keepFrontRim: false,
   keepCornerRims: false,
@@ -153,22 +153,22 @@ app.innerHTML = `
 
     <section class="viewer" id="viewer">
       <div class="viewer-controls">
-        <div class="viewer-controls-head">
-          <strong>投影控制</strong>
-          <span>直接影响墙面预览</span>
+        <div class="viewer-controls-col viewer-controls-col-left">
+          ${rangeControl("projectionScale", "墙面投影倍率", 5, 20, 0.1)}
+          ${rangeControl("lightDistance", "光源距墙高度", 3, 75, 1)}
         </div>
-        ${rangeControl("projectionScale", "墙面投影倍率", 5, 20, 0.1)}
-        ${rangeControl("lightDistance", "光源距墙高度", 3, 75, 1)}
-        ${rangeControl("lightBrightness", "光源亮度", 0.2, 3, 0.1)}
-        <div class="rim-options">
-          <label class="checkbox-label compact-check">
-            <input id="keepFrontRimInput" type="checkbox" />
-            保留正面边框
-          </label>
-          <label class="checkbox-label compact-check">
-            <input id="keepCornerRimsInput" type="checkbox" />
-            保留四角边框
-          </label>
+        <div class="viewer-controls-col viewer-controls-col-right">
+          ${rangeControl("lightBrightness", "光源亮度", 0.2, 3, 0.1)}
+          <div class="rim-options">
+            <label class="checkbox-label compact-check">
+              <input id="keepFrontRimInput" type="checkbox" />
+              保留正面边框
+            </label>
+            <label class="checkbox-label compact-check">
+              <input id="keepCornerRimsInput" type="checkbox" />
+              保留四角边框
+            </label>
+          </div>
         </div>
       </div>
       <div class="hud">
@@ -430,9 +430,9 @@ function processImageToMask(
     mask[i] = invert ? Number(!foreground) : Number(foreground);
   }
 
-  // 清理锯齿和毛刺：形态学平滑 + 小连通域剔除。
+  // 清理锯齿和毛刺：轻度闭运算 + 小连通域剔除，尽量保留细节（如剑、发梢）。
   let cleanedMask = smoothBinaryMask(mask, size);
-  const minArea = Math.max(18, Math.round(size * size * 0.00008));
+  const minArea = Math.max(6, Math.round(size * size * 0.00002));
   cleanedMask = removeSmallComponents(cleanedMask, size, minArea);
 
   return {
@@ -449,13 +449,24 @@ function detectBackgroundColor(data: Uint8ClampedArray, width: number, height: n
     samples.push([data[i], data[i + 1], data[i + 2]]);
   };
 
-  for (let i = 0; i < width; i += 4) {
-    push(i, 0);
-    push(i, height - 1);
-  }
-  for (let y = 0; y < height; y += 4) {
-    push(0, y);
-    push(width - 1, y);
+  // 只采样四个角附近，避免主体靠边时把前景误判为背景。
+  const patch = Math.max(12, Math.floor(Math.min(width, height) * 0.08));
+  const step = Math.max(2, Math.floor(patch / 8));
+  const samplePatch = (startX: number, startY: number) => {
+    for (let y = startY; y < startY + patch; y += step) {
+      for (let x = startX; x < startX + patch; x += step) {
+        push(Math.min(width - 1, x), Math.min(height - 1, y));
+      }
+    }
+  };
+
+  samplePatch(0, 0);
+  samplePatch(width - patch, 0);
+  samplePatch(0, height - patch);
+  samplePatch(width - patch, height - patch);
+
+  if (samples.length === 0) {
+    return [255, 255, 255];
   }
 
   return [median(samples.map((s) => s[0])), median(samples.map((s) => s[1])), median(samples.map((s) => s[2]))];
@@ -663,32 +674,19 @@ function enforcePrintableWallMask(
   keepFrontRim: boolean,
   keepCornerRims: boolean,
 ) {
-  const solid = new Uint8Array(size * size);
+  const cleanedOpen = new Uint8Array(size * size);
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
+      if (!keepFrontRim && y < zRimCells) {
+        cleanedOpen[y * size + x] = 1;
+        continue;
+      }
       const cornerRim = keepCornerRims && (x < xRimCells || x >= size - xRimCells);
       const backRim = y >= size - zRimCells;
       const frontRim = keepFrontRim && y < zRimCells;
       const border = cornerRim || backRim || frontRim;
-      solid[y * size + x] = border || !openMask[y * size + x] ? 1 : 0;
-    }
-  }
-
-  const connected = floodFillBorderSolids(solid, size, {
-    front: keepFrontRim,
-    sides: keepCornerRims,
-    back: true,
-  });
-  const cleanedOpen = new Uint8Array(size * size);
-  for (let i = 0; i < cleanedOpen.length; i += 1) {
-    cleanedOpen[i] = connected[i] ? 0 : 1;
-  }
-
-  if (!keepFrontRim) {
-    for (let y = 0; y < zRimCells; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        cleanedOpen[y * size + x] = 1;
-      }
+      const shouldBeSolid = border || !openMask[y * size + x];
+      cleanedOpen[y * size + x] = shouldBeSolid ? 0 : 1;
     }
   }
 
@@ -708,8 +706,26 @@ function applyGlobalConnectivityFilter(masks: Record<FaceKey, Uint8Array>, size:
     }
   }
 
+  removeLongThinSolidRuns(solids, size, lamp);
+
   const backCells = Math.max(1, Math.ceil(lamp.minFeature / (lamp.boxDepth / size)));
-  const connected = floodFillGlobalConnected(solids, size, backCells);
+  let connected = floodFillGlobalConnected(solids, size, backCells);
+  if (removeTinyFloatingSolids(solids, connected, size, lamp) > 0) {
+    connected = floodFillGlobalConnected(solids, size, backCells);
+  }
+  const criticalSolids = cloneSolids(solids, size);
+  const bridgeRadius = getBridgeRadiusCells(lamp, size);
+  let guard = 0;
+  while (countFloatingComponents(solids, connected, size) > 0 && guard < 240) {
+    const bridge = findNearestFloatingBridgePath(solids, connected, size, lamp, bridgeRadius);
+    if (!bridge) {
+      break;
+    }
+    stampGlobalBridge(solids, criticalSolids, bridge.parents, bridge.targetId, size, bridgeRadius, lamp);
+    connected = floodFillGlobalConnected(solids, size, backCells);
+    guard += 1;
+  }
+
   const filteredMasks: Record<FaceKey, Uint8Array> = {
     left: new Uint8Array(size * size),
     right: new Uint8Array(size * size),
@@ -731,6 +747,124 @@ function applyGlobalConnectivityFilter(masks: Record<FaceKey, Uint8Array>, size:
 
   const floatingComponents = countFloatingComponents(solids, connected, size);
   return { masks: filteredMasks, floatingCells, floatingComponents };
+}
+
+function removeTinyFloatingSolids(
+  solids: Record<FaceKey, Uint8Array>,
+  connected: Record<FaceKey, Uint8Array>,
+  size: number,
+  lamp: LampParams,
+) {
+  const seen: Record<FaceKey, Uint8Array> = {
+    left: new Uint8Array(size * size),
+    right: new Uint8Array(size * size),
+    top: new Uint8Array(size * size),
+    bottom: new Uint8Array(size * size),
+  };
+  const queue: Array<{ face: FaceKey; row: number; col: number }> = [];
+  const component: Array<{ face: FaceKey; row: number; col: number }> = [];
+  const minCells = getMinFloatingComponentCells(lamp, size);
+  let removed = 0;
+
+  const canVisit = (face: FaceKey, row: number, col: number) => {
+    if (row < 0 || row >= size || col < 0 || col >= size) return false;
+    const index = row * size + col;
+    return solids[face][index] === 1 && connected[face][index] === 0 && seen[face][index] === 0;
+  };
+
+  for (const face of FACE_KEYS) {
+    for (let row = 0; row < size; row += 1) {
+      for (let col = 0; col < size; col += 1) {
+        if (!canVisit(face, row, col)) continue;
+
+        queue.length = 0;
+        component.length = 0;
+        queue.push({ face, row, col });
+        seen[face][row * size + col] = 1;
+
+        for (let head = 0; head < queue.length; head += 1) {
+          const current = queue[head];
+          component.push(current);
+          const neighbors = getGlobalNeighbors(current.face, current.row, current.col, size);
+          for (const neighbor of neighbors) {
+            if (!canVisit(neighbor.face, neighbor.row, neighbor.col)) continue;
+            seen[neighbor.face][neighbor.row * size + neighbor.col] = 1;
+            queue.push(neighbor);
+          }
+        }
+
+        if (component.length >= minCells) {
+          continue;
+        }
+
+        for (const cell of component) {
+          solids[cell.face][cell.row * size + cell.col] = 0;
+          removed += 1;
+        }
+      }
+    }
+  }
+
+  return removed;
+}
+
+function removeLongThinSolidRuns(solids: Record<FaceKey, Uint8Array>, size: number, lamp: LampParams) {
+  for (const face of FACE_KEYS) {
+    const cellMm = getFaceMinCellMm(face, lamp, size);
+    const thinCells = Math.max(2, Math.ceil(lamp.minFeature / Math.max(0.001, cellMm)));
+    const longCells = Math.max(thinCells * 6, Math.ceil(size * 0.055));
+    const horizontalRuns = new Uint16Array(size * size);
+    const verticalRuns = new Uint16Array(size * size);
+    const remove = new Uint8Array(size * size);
+    const faceSolid = solids[face];
+
+    for (let row = 0; row < size; row += 1) {
+      let col = 0;
+      while (col < size) {
+        while (col < size && !faceSolid[row * size + col]) col += 1;
+        const start = col;
+        while (col < size && faceSolid[row * size + col]) col += 1;
+        const run = col - start;
+        for (let x = start; x < col; x += 1) {
+          horizontalRuns[row * size + x] = run;
+        }
+      }
+    }
+
+    for (let col = 0; col < size; col += 1) {
+      let row = 0;
+      while (row < size) {
+        while (row < size && !faceSolid[row * size + col]) row += 1;
+        const start = row;
+        while (row < size && faceSolid[row * size + col]) row += 1;
+        const run = row - start;
+        for (let y = start; y < row; y += 1) {
+          verticalRuns[y * size + col] = run;
+        }
+      }
+    }
+
+    for (let row = 0; row < size; row += 1) {
+      for (let col = 0; col < size; col += 1) {
+        const index = row * size + col;
+        if (!faceSolid[index] || isProtectedStructuralCell(face, row, col, size, lamp)) {
+          continue;
+        }
+
+        const horizontalStrip = horizontalRuns[index] >= longCells && verticalRuns[index] <= thinCells;
+        const verticalStrip = verticalRuns[index] >= longCells && horizontalRuns[index] <= thinCells;
+        if (horizontalStrip || verticalStrip) {
+          remove[index] = 1;
+        }
+      }
+    }
+
+    for (let i = 0; i < remove.length; i += 1) {
+      if (remove[i]) {
+        faceSolid[i] = 0;
+      }
+    }
+  }
 }
 
 function floodFillGlobalConnected(
@@ -799,6 +933,170 @@ function getGlobalNeighbors(face: FaceKey, row: number, col: number, size: numbe
   }
 
   return out;
+}
+
+function findNearestFloatingBridgePath(
+  solids: Record<FaceKey, Uint8Array>,
+  connected: Record<FaceKey, Uint8Array>,
+  size: number,
+  lamp: LampParams,
+  bridgeRadius: number,
+) {
+  const total = FACE_KEYS.length * size * size;
+  const parents = new Int32Array(total);
+  parents.fill(-2);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+  const frontNoBridgeCells = getFrontNoBridgeCells(lamp, size, bridgeRadius);
+
+  for (const face of FACE_KEYS) {
+    for (let row = 0; row < size; row += 1) {
+      for (let col = 0; col < size; col += 1) {
+        const index = row * size + col;
+        if (!connected[face][index]) {
+          continue;
+        }
+        const id = getGlobalCellId(face, row, col, size);
+        parents[id] = -1;
+        queue[tail] = id;
+        tail += 1;
+      }
+    }
+  }
+
+  while (head < tail) {
+    const id = queue[head];
+    head += 1;
+    const current = parseGlobalCellId(id, size);
+    const neighbors = getGlobalNeighbors(current.face, current.row, current.col, size);
+    for (const neighbor of neighbors) {
+      if (neighbor.row < 0 || neighbor.row >= size || neighbor.col < 0 || neighbor.col >= size) {
+        continue;
+      }
+      const nextId = getGlobalCellId(neighbor.face, neighbor.row, neighbor.col, size);
+      if (parents[nextId] !== -2) {
+        continue;
+      }
+      parents[nextId] = id;
+      const nextIndex = neighbor.row * size + neighbor.col;
+      if (solids[neighbor.face][nextIndex] && !connected[neighbor.face][nextIndex]) {
+        return { parents, targetId: nextId };
+      }
+      if (frontNoBridgeCells > 0 && neighbor.row < frontNoBridgeCells) {
+        continue;
+      }
+      queue[tail] = nextId;
+      tail += 1;
+    }
+  }
+
+  return null;
+}
+
+function stampGlobalBridge(
+  solids: Record<FaceKey, Uint8Array>,
+  criticalSolids: Record<FaceKey, Uint8Array>,
+  parents: Int32Array,
+  targetId: number,
+  size: number,
+  radius: number,
+  lamp: LampParams,
+) {
+  const frontNoBridgeCells = getFrontNoBridgeCells(lamp, size, radius);
+  let id = targetId;
+  while (id >= 0) {
+    const cell = parseGlobalCellId(id, size);
+    stampSolid(solids[cell.face], criticalSolids[cell.face], size, cell.col, cell.row, radius, frontNoBridgeCells);
+    id = parents[id];
+  }
+}
+
+function stampSolid(
+  mask: Uint8Array,
+  criticalMask: Uint8Array,
+  size: number,
+  cx: number,
+  cy: number,
+  radius: number,
+  frontNoBridgeCells: number,
+) {
+  for (let y = cy - radius; y <= cy + radius; y += 1) {
+    for (let x = cx - radius; x <= cx + radius; x += 1) {
+      if (x >= 0 && x < size && y >= 0 && y < size) {
+        const index = y * size + x;
+        if (frontNoBridgeCells > 0 && y < frontNoBridgeCells && !criticalMask[index]) {
+          continue;
+        }
+        mask[index] = 1;
+      }
+    }
+  }
+}
+
+function getBridgeRadiusCells(lamp: LampParams, size: number) {
+  const minCellMm = Math.min(lamp.boxWidth, lamp.boxHeight, lamp.boxDepth) / size;
+  const widthCells = lamp.minFeature / Math.max(0.001, minCellMm);
+  return Math.max(1, Math.floor(widthCells / 2));
+}
+
+function getMinFloatingComponentCells(lamp: LampParams, size: number) {
+  const minCellMm = Math.min(lamp.boxWidth, lamp.boxHeight, lamp.boxDepth) / size;
+  const widthCells = lamp.minFeature / Math.max(0.001, minCellMm);
+  return Math.max(6, Math.ceil(widthCells * widthCells * 1.15));
+}
+
+function getFaceMinCellMm(face: FaceKey, lamp: LampParams, size: number) {
+  const faceWidth = face === "left" || face === "right" ? lamp.boxHeight : lamp.boxWidth;
+  return Math.min(faceWidth / size, lamp.boxDepth / size);
+}
+
+function isProtectedStructuralCell(face: FaceKey, row: number, col: number, size: number, lamp: LampParams) {
+  const faceWidth = face === "left" || face === "right" ? lamp.boxHeight : lamp.boxWidth;
+  const xRimCells = Math.max(1, Math.ceil(lamp.minFeature / (faceWidth / size)));
+  const zRimCells = Math.max(1, Math.ceil(lamp.minFeature / (lamp.boxDepth / size)));
+  if (row >= size - zRimCells) {
+    return true;
+  }
+  if (lamp.keepFrontRim && row < zRimCells) {
+    return true;
+  }
+  if (lamp.keepCornerRims && (col < xRimCells || col >= size - xRimCells)) {
+    return true;
+  }
+  return false;
+}
+
+function getFrontNoBridgeCells(lamp: LampParams, size: number, bridgeRadius: number) {
+  if (lamp.keepFrontRim) {
+    return 0;
+  }
+  const zRimCells = Math.max(1, Math.ceil(lamp.minFeature / (lamp.boxDepth / size)));
+  return Math.max(bridgeRadius + 1, zRimCells * 2);
+}
+
+function cloneSolids(solids: Record<FaceKey, Uint8Array>, size: number): Record<FaceKey, Uint8Array> {
+  return {
+    left: new Uint8Array(solids.left.subarray(0, size * size)),
+    right: new Uint8Array(solids.right.subarray(0, size * size)),
+    top: new Uint8Array(solids.top.subarray(0, size * size)),
+    bottom: new Uint8Array(solids.bottom.subarray(0, size * size)),
+  };
+}
+
+function getGlobalCellId(face: FaceKey, row: number, col: number, size: number) {
+  return FACE_KEYS.indexOf(face) * size * size + row * size + col;
+}
+
+function parseGlobalCellId(id: number, size: number): { face: FaceKey; row: number; col: number } {
+  const faceArea = size * size;
+  const face = FACE_KEYS[Math.floor(id / faceArea)] ?? "left";
+  const local = id % faceArea;
+  return {
+    face,
+    row: Math.floor(local / size),
+    col: local % size,
+  };
 }
 
 function countFloatingComponents(
@@ -993,54 +1291,317 @@ function addWall(
   const cellU = faceWidth / res;
   const cellZ = lamp.boxDepth / res;
   const sampled = resampleMask(sourceMask, sourceRes, res);
+  const solid = new Uint8Array(res * res);
+  for (let i = 0; i < sampled.length; i += 1) {
+    solid[i] = sampled[i] ? 0 : 1;
+  }
 
-  for (let row = 0; row < res; row += 1) {
-    let col = 0;
-    while (col < res) {
-      while (col < res && sampled[row * res + col]) {
-        col += 1;
-      }
-      const runStart = col;
-      while (col < res && !sampled[row * res + col]) {
-        col += 1;
-      }
-      const runEnd = col;
-      if (runEnd <= runStart) {
+  const innerN = getWallInnerN(face, lamp);
+  const outerN = getWallOuterN(face, lamp);
+  const minN = Math.min(innerN, outerN);
+  const maxN = Math.max(innerN, outerN);
+  const outwardNormal = getWallOutwardNormal(face);
+  const inwardNormal: [number, number, number] = [
+    -outwardNormal[0],
+    -outwardNormal[1],
+    -outwardNormal[2],
+  ];
+  const rectangles = findSolidRectangles(sampled, res);
+
+  for (const rect of rectangles) {
+    const u0 = rect.col * cellU - faceWidth / 2;
+    const u1 = (rect.col + rect.width) * cellU - faceWidth / 2;
+    const z0 = lamp.boxDepth - (rect.row + rect.height) * cellZ;
+    const z1 = lamp.boxDepth - rect.row * cellZ;
+    addWallConstantNRect(builder, face, outerN, u0, u1, z0, z1, outwardNormal);
+    addWallConstantNRect(builder, face, innerN, u0, u1, z0, z1, inwardNormal);
+  }
+
+  addWallUBoundaries(builder, solid, res, face, minN, maxN, faceWidth, cellU, cellZ, lamp.boxDepth);
+  addWallZBoundaries(builder, solid, res, face, minN, maxN, faceWidth, cellU, cellZ, lamp.boxDepth);
+}
+
+function findSolidRectangles(mask: Uint8Array, size: number) {
+  const used = new Uint8Array(size * size);
+  const rectangles: Array<{ row: number; col: number; width: number; height: number }> = [];
+
+  for (let row = 0; row < size; row += 1) {
+    for (let col = 0; col < size; col += 1) {
+      const startIndex = row * size + col;
+      if (mask[startIndex] || used[startIndex]) {
         continue;
       }
 
-      const runCells = runEnd - runStart;
-      const uCenter = (runStart + runCells / 2) * cellU - faceWidth / 2;
-      const zCenter = (res - row - 0.5) * cellZ;
+      let width = 1;
+      let height = 1;
+      let bestArea = 1;
+      let bestMinSide = 1;
+      let maxWidthFromStart = size - col;
 
-      if (face === "left") {
-        builder.addBox(
-          [-lamp.boxWidth / 2 - lamp.wallThickness / 2, uCenter, zCenter],
-          [lamp.wallThickness, runCells * cellU, cellZ],
-        );
-      } else if (face === "right") {
-        builder.addBox(
-          [lamp.boxWidth / 2 + lamp.wallThickness / 2, uCenter, zCenter],
-          [lamp.wallThickness, runCells * cellU, cellZ],
-        );
-      } else if (face === "top") {
-        builder.addBox(
-          [uCenter, lamp.boxHeight / 2 + lamp.wallThickness / 2, zCenter],
-          [runCells * cellU, lamp.wallThickness, cellZ],
-        );
-      } else {
-        builder.addBox(
-          [uCenter, -lamp.boxHeight / 2 - lamp.wallThickness / 2, zCenter],
-          [runCells * cellU, lamp.wallThickness, cellZ],
-        );
+      for (let y = row; y < size; y += 1) {
+        let rowWidth = 0;
+        while (rowWidth < maxWidthFromStart) {
+          const index = y * size + col + rowWidth;
+          if (mask[index] || used[index]) {
+            break;
+          }
+          rowWidth += 1;
+        }
+        if (rowWidth === 0) {
+          break;
+        }
+
+        maxWidthFromStart = Math.min(maxWidthFromStart, rowWidth);
+        const candidateHeight = y - row + 1;
+        const candidateArea = maxWidthFromStart * candidateHeight;
+        const candidateMinSide = Math.min(maxWidthFromStart, candidateHeight);
+        if (
+          candidateArea > bestArea ||
+          (candidateArea === bestArea && candidateMinSide > bestMinSide)
+        ) {
+          width = maxWidthFromStart;
+          height = candidateHeight;
+          bestArea = candidateArea;
+          bestMinSide = candidateMinSide;
+        }
       }
+
+      for (let y = row; y < row + height; y += 1) {
+        for (let x = col; x < col + width; x += 1) {
+          used[y * size + x] = 1;
+        }
+      }
+
+      rectangles.push({ row, col, width, height });
     }
   }
+
+  return rectangles;
+}
+
+function addWallUBoundaries(
+  builder: GeometryBuilder,
+  solid: Uint8Array,
+  size: number,
+  face: FaceKey,
+  minN: number,
+  maxN: number,
+  faceWidth: number,
+  cellU: number,
+  cellZ: number,
+  depth: number,
+) {
+  for (let boundary = 0; boundary <= size; boundary += 1) {
+    let row = 0;
+    while (row < size) {
+      const normalSign = getUBoundaryNormalSign(solid, size, boundary, row);
+      if (normalSign === 0) {
+        row += 1;
+        continue;
+      }
+
+      const rowStart = row;
+      row += 1;
+      while (row < size && getUBoundaryNormalSign(solid, size, boundary, row) === normalSign) {
+        row += 1;
+      }
+
+      const u = boundary * cellU - faceWidth / 2;
+      const z0 = depth - row * cellZ;
+      const z1 = depth - rowStart * cellZ;
+      addWallConstantURect(builder, face, u, minN, maxN, z0, z1, getWallUNormal(face, normalSign));
+    }
+  }
+}
+
+function addWallZBoundaries(
+  builder: GeometryBuilder,
+  solid: Uint8Array,
+  size: number,
+  face: FaceKey,
+  minN: number,
+  maxN: number,
+  faceWidth: number,
+  cellU: number,
+  cellZ: number,
+  depth: number,
+) {
+  for (let boundary = 0; boundary <= size; boundary += 1) {
+    let col = 0;
+    while (col < size) {
+      const normalSign = getZBoundaryNormalSign(solid, size, boundary, col);
+      if (normalSign === 0) {
+        col += 1;
+        continue;
+      }
+
+      const colStart = col;
+      col += 1;
+      while (col < size && getZBoundaryNormalSign(solid, size, boundary, col) === normalSign) {
+        col += 1;
+      }
+
+      const u0 = colStart * cellU - faceWidth / 2;
+      const u1 = col * cellU - faceWidth / 2;
+      const z = depth - boundary * cellZ;
+      addWallConstantZRect(builder, face, z, minN, maxN, u0, u1, [0, 0, normalSign]);
+    }
+  }
+}
+
+function getUBoundaryNormalSign(solid: Uint8Array, size: number, boundary: number, row: number) {
+  const leftSolid = boundary > 0 && solid[row * size + boundary - 1] === 1;
+  const rightSolid = boundary < size && solid[row * size + boundary] === 1;
+  if (leftSolid === rightSolid) return 0;
+  return leftSolid ? 1 : -1;
+}
+
+function getZBoundaryNormalSign(solid: Uint8Array, size: number, boundary: number, col: number) {
+  const highZSolid = boundary > 0 && solid[(boundary - 1) * size + col] === 1;
+  const lowZSolid = boundary < size && solid[boundary * size + col] === 1;
+  if (highZSolid === lowZSolid) return 0;
+  return highZSolid ? -1 : 1;
+}
+
+function addWallConstantNRect(
+  builder: GeometryBuilder,
+  face: FaceKey,
+  n: number,
+  u0: number,
+  u1: number,
+  z0: number,
+  z1: number,
+  normal: [number, number, number],
+) {
+  builder.addQuad(
+    [
+      wallPoint(face, n, u0, z0),
+      wallPoint(face, n, u1, z0),
+      wallPoint(face, n, u1, z1),
+      wallPoint(face, n, u0, z1),
+    ],
+    normal,
+  );
+}
+
+function addWallConstantURect(
+  builder: GeometryBuilder,
+  face: FaceKey,
+  u: number,
+  n0: number,
+  n1: number,
+  z0: number,
+  z1: number,
+  normal: [number, number, number],
+) {
+  builder.addQuad(
+    [
+      wallPoint(face, n0, u, z0),
+      wallPoint(face, n1, u, z0),
+      wallPoint(face, n1, u, z1),
+      wallPoint(face, n0, u, z1),
+    ],
+    normal,
+  );
+}
+
+function addWallConstantZRect(
+  builder: GeometryBuilder,
+  face: FaceKey,
+  z: number,
+  n0: number,
+  n1: number,
+  u0: number,
+  u1: number,
+  normal: [number, number, number],
+) {
+  builder.addQuad(
+    [
+      wallPoint(face, n0, u0, z),
+      wallPoint(face, n1, u0, z),
+      wallPoint(face, n1, u1, z),
+      wallPoint(face, n0, u1, z),
+    ],
+    normal,
+  );
+}
+
+function wallPoint(face: FaceKey, n: number, u: number, z: number): [number, number, number] {
+  if (face === "left" || face === "right") {
+    return [n, u, z];
+  }
+  return [u, n, z];
+}
+
+function getWallInnerN(face: FaceKey, lamp: LampParams) {
+  if (face === "left") return -lamp.boxWidth / 2;
+  if (face === "right") return lamp.boxWidth / 2;
+  if (face === "top") return lamp.boxHeight / 2;
+  return -lamp.boxHeight / 2;
+}
+
+function getWallOuterN(face: FaceKey, lamp: LampParams) {
+  const inner = getWallInnerN(face, lamp);
+  if (face === "left" || face === "bottom") {
+    return inner - lamp.wallThickness;
+  }
+  return inner + lamp.wallThickness;
+}
+
+function getWallOutwardNormal(face: FaceKey): [number, number, number] {
+  if (face === "left") return [-1, 0, 0];
+  if (face === "right") return [1, 0, 0];
+  if (face === "top") return [0, 1, 0];
+  return [0, -1, 0];
+}
+
+function getWallUNormal(face: FaceKey, sign: number): [number, number, number] {
+  if (face === "left" || face === "right") {
+    return [0, sign, 0];
+  }
+  return [sign, 0, 0];
+}
+
+function subtractPoint(a: [number, number, number], b: [number, number, number]): [number, number, number] {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function crossPoint(a: [number, number, number], b: [number, number, number]): [number, number, number] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function dotPoint(a: [number, number, number], b: [number, number, number]) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 class GeometryBuilder {
   private vertices: number[] = [];
   private indices: number[] = [];
+
+  addQuad(points: [number, number, number][], normalHint: [number, number, number]) {
+    if (points.length !== 4) {
+      return;
+    }
+
+    const offset = this.vertices.length / 3;
+    for (const point of points) {
+      this.vertices.push(...point);
+    }
+
+    const edgeA = subtractPoint(points[1], points[0]);
+    const edgeB = subtractPoint(points[2], points[0]);
+    const normal = crossPoint(edgeA, edgeB);
+    const isFacingHint = dotPoint(normal, normalHint) >= 0;
+    if (isFacingHint) {
+      this.indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
+    } else {
+      this.indices.push(offset, offset + 2, offset + 1, offset, offset + 3, offset + 2);
+    }
+  }
 
   addBox(center: [number, number, number], size: [number, number, number]) {
     const [cx, cy, cz] = center;
@@ -1324,9 +1885,7 @@ function removeSmallComponents(mask: Uint8Array, size: number, minArea: number) 
 }
 
 function smoothBinaryMask(mask: Uint8Array, size: number) {
-  const closed = erodeBinaryMask(dilateBinaryMask(mask, size, 1), size, 1);
-  const opened = dilateBinaryMask(erodeBinaryMask(closed, size, 1), size, 1);
-  return majorityFilterBinaryMask(opened, size, 5);
+  return erodeBinaryMask(dilateBinaryMask(mask, size, 1), size, 1);
 }
 
 function dilateBinaryMask(mask: Uint8Array, size: number, radius: number) {
@@ -1372,26 +1931,6 @@ function erodeBinaryMask(mask: Uint8Array, size: number, radius: number) {
         }
       }
       out[y * size + x] = on;
-    }
-  }
-  return out;
-}
-
-function majorityFilterBinaryMask(mask: Uint8Array, size: number, threshold: number) {
-  const out = new Uint8Array(size * size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      let count = 0;
-      for (let dy = -1; dy <= 1; dy += 1) {
-        const ny = y + dy;
-        if (ny < 0 || ny >= size) continue;
-        for (let dx = -1; dx <= 1; dx += 1) {
-          const nx = x + dx;
-          if (nx < 0 || nx >= size) continue;
-          count += mask[ny * size + nx];
-        }
-      }
-      out[y * size + x] = count >= threshold ? 1 : 0;
     }
   }
   return out;
